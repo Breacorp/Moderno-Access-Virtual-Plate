@@ -52,28 +52,85 @@ function saveConfig(config) {
     fs.writeFileSync(CONFIG_PATH, JSON.stringify(config, null, 2));
 }
 
+// Authentic CSS from firmware
+const AUTHENTIC_CSS = `
+    .titlefont { color:#0066cc; font-family:Arial; font-weight:bold; }
+    .cmdtitle { font-family:Arial; color:#3399CC; font-weight:bold; }
+    .font-1 { font-family: Arial; font-size: 30px; color: #0066CC; }
+    .font-2 { font-family: Arial; font-size: 20px; color: #000000; }
+    .font-3 { font-family: Arial; font-size: 14px; font-weight: bold; color: #000000; }
+    .font-4 { font-family: Arial; font-size: 12px; color: #000000; }
+    table { border-collapse: collapse; width: 100%; border: 1px solid #CCCCCC; }
+    th { background-color: #3399CC; color: white; padding: 5px; text-align: left; }
+    td { border: 1px solid #CCCCCC; padding: 5px; }
+`;
+
+function wrapLegacy(title, content) {
+    return `
+        <html>
+        <head>
+            <title>${title}</title>
+            <style>${AUTHENTIC_CSS}</style>
+        </head>
+        <body style="margin:20px;">
+            <div class="font-1">${title}</div>
+            <hr color="#0066CC">
+            ${content}
+        </body>
+        </html>
+    `;
+}
+
 // Endpoints
+app.get(['/', '/index.htm'], (req, res) => {
+    res.send(wrapLegacy('Welcome to TNG PRO', '<p class="font-2">Select a menu option to continue.</p>'));
+});
+
 app.get('/status.htm', (req, res) => {
     const config = getConfig();
-    res.send(`
-        <html>
-            <body>
-                <h1>${config.board.name} Status</h1>
-                <p>Security State: ${config.board.securityState}</p>
-                <p>Mode: ${process.env.MODE}</p>
-            </body>
-        </html>
-    `);
+    const content = `
+        <div class="cmdtitle">System Status</div>
+        <table>
+            <tr><td class="font-3">Product Name</td><td>${process.env.BOARD_TYPE || 'TNG PRO'}</td></tr>
+            <tr><td class="font-3">Security State</td><td>${config.board.securityState}</td></tr>
+            <tr><td class="font-3">Mode</td><td>${process.env.MODE}</td></tr>
+        </table>
+    `;
+    res.send(wrapLegacy('Status Report', content));
 });
 
-app.get('/status.cgi', (req, res) => {
+app.get('/database.htm', (req, res) => {
     const config = getConfig();
-    // Typical CGI response for these boards is a text string or minimal HTML
-    res.send(`securitystate=${config.board.securityState}&mode=${process.env.MODE}`);
+    let table = '<table><tr><th>ID</th><th>Name</th><th>Card</th></tr>';
+    config.users.forEach(u => {
+        table += `<tr><td>${u.id}</td><td>${u.name}</td><td>${u.card}</td></tr>`;
+    });
+    table += '</table>';
+    res.send(wrapLegacy('User Database', table));
 });
 
-app.get('/Scrt.htm', (req, res) => {
-    res.send('<html><body><h1>Security Control Page</h1></body></html>');
+app.get('/AccLog.htm', (req, res) => {
+    const config = getConfig();
+    let table = '<table><tr><th>Time</th><th>User</th><th>Action</th><th>Door</th></tr>';
+    config.logs.slice().reverse().forEach(l => {
+        table += `<tr><td>${l.timestamp}</td><td>${l.user}</td><td>${l.action}</td><td>${l.door}</td></tr>`;
+    });
+    table += '</table>';
+    res.send(wrapLegacy('Access Log', table));
+});
+
+// Generic routes for other detected files
+const otherRoutes = [
+    'Clock.htm', 'CmdBar.htm', 'Config.htm', 'EmpRcd.htm', 'FWUpgr.htm', 
+    'SysCfg.htm', 'groups.htm', 'setgroup.htm', 'times.htm', 'holiday.htm', 
+    'Door.htm', 'DSet.htm', 'Event.htm', 'UserLog.htm', 'SysLog.htm', 
+    'Scrt.htm', 'Logout.htm'
+];
+
+otherRoutes.forEach(route => {
+    app.get(`/${route}`, (req, res) => {
+        res.send(wrapLegacy(route, `<p class="font-4">Simulated content for ${route}</p>`));
+    });
 });
 
 app.get('/man.cgi', (req, res) => {
