@@ -10,7 +10,7 @@ dotenv.config();
 const app = express();
 const PORT = process.env.PORT || 8080;
 const CONFIG_PATH = path.join(__dirname, 'config.json');
-const WEB_DIR = path.join(__dirname, 'firmware_web_extracted');
+const WEB_DIR = path.join(__dirname, 'public');
 
 app.use(morgan('dev'));
 app.use(express.json());
