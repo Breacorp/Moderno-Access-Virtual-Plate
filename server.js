@@ -3,47 +3,19 @@ const fs = require('fs');
 const path = require('path');
 const morgan = require('morgan');
 const auth = require('basic-auth');
-require('dotenv').config();
+const dotenv = require('dotenv');
+
+dotenv.config();
 
 const app = express();
 const PORT = process.env.PORT || 8080;
 const CONFIG_PATH = path.join(__dirname, 'config.json');
+const WEB_DIR = path.join(__dirname, 'firmware_web_extracted');
 
-// Middleware
 app.use(morgan('dev'));
-app.use(express.static('public'));
 app.use(express.json());
 
-// Latency simulation middleware
-app.use((req, res, next) => {
-    const latency = parseInt(process.env.LATENCY_MS) || 0;
-    if (latency > 0) {
-        setTimeout(next, latency);
-    } else {
-        next();
-    }
-});
-
-// Basic Auth Middleware
-const checkAuth = (req, res, next) => {
-    // If mode is 'unauthorized', enforce basic auth
-    if (process.env.MODE === 'unauthorized') {
-        const credentials = auth(req);
-        const expectedUser = process.env.BOARD_USER || 'admin';
-        const expectedPass = process.env.BOARD_PASS || 'admin';
-
-        if (!credentials || credentials.name !== expectedUser || credentials.pass !== expectedPass) {
-            res.set('WWW-Authenticate', 'Basic realm="Moderno Access"');
-            return res.status(401).send('Unauthorized');
-        }
-    }
-    next();
-};
-
-// Apply auth to simulated endpoints
-app.use(['/status.htm', '/status.cgi', '/Scrt.htm', '/man.cgi', '/if.cgi'], checkAuth);
-
-// Load Config
+// Simulation State
 function getConfig() {
     return JSON.parse(fs.readFileSync(CONFIG_PATH, 'utf8'));
 }
@@ -52,181 +24,124 @@ function saveConfig(config) {
     fs.writeFileSync(CONFIG_PATH, JSON.stringify(config, null, 2));
 }
 
-// Authentic CSS from firmware
-const AUTHENTIC_CSS = `
-    .titlefont { color:#0066cc; font-family:Arial; font-weight:bold; }
-    .cmdtitle { font-family:Arial; color:#3399CC; font-weight:bold; }
-    .font-1 { font-family: Arial; font-size: 30px; color: #0066CC; }
-    .font-2 { font-family: Arial; font-size: 20px; color: #000000; }
-    .font-3 { font-family: Arial; font-size: 14px; font-weight: bold; color: #000000; }
-    .font-4 { font-family: Arial; font-size: 12px; color: #000000; }
-    table { border-collapse: collapse; width: 100%; border: 1px solid #CCCCCC; }
-    th { background-color: #3399CC; color: white; padding: 5px; text-align: left; }
-    td { border: 1px solid #CCCCCC; padding: 5px; }
-`;
+// Authentication Middleware
+const authMiddleware = (req, res, next) => {
+    if (process.env.MODE === 'unauthorized') {
+        const credentials = auth(req);
+        if (!credentials || credentials.name !== process.env.BOARD_USER || credentials.pass !== process.env.BOARD_PASS) {
+            res.statusCode = 401;
+            res.setHeader('WWW-Authenticate', 'Basic realm="TNG PRO WebServer"');
+            res.end('Access denied');
+            return;
+        }
+    }
+    next();
+};
 
-function wrapLegacy(title, content) {
-    return `
-        <html>
-        <head>
-            <title>${title}</title>
-            <style>${AUTHENTIC_CSS}</style>
-        </head>
-        <body style="margin:20px;">
-            <div class="font-1">${title}</div>
-            <hr color="#0066CC">
-            ${content}
-        </body>
-        </html>
-    `;
+// SSI Processor
+function processSSI(html, config) {
+    const ssiMap = {
+        'status.cgi$proname': `"${config.board.name}"`,
+        'status.cgi$log_pw_on': '"checked"',
+        'status.cgi$web_mode': '0',
+        'status.cgi$language': '0', // 0: English, 1: CHS, 2: CHT
+        'status.cgi$fmver': '"C2P-Ver1.9"',
+        'status.cgi$hwver': '"2.0"',
+        'status.cgi$module_type': '"SEMAC-D2"',
+        'status.cgi$uptime': '"12 days, 04:22:11"',
+        'status.cgi$modelname': '2',
+        'status.cgi$Max_User': '20000',
+        'status.cgi$outdate': '"03/28/2017"',
+        'status.cgi$md5_signal': '""',
+        'status.cgi$pdns': '"8.8.8.8"',
+        'status.cgi$ap_tcps_port': '1001',
+        'status.cgi$ap_tcpc1': '"0.0.0.0"',
+        'status.cgi$soft_status': '"Connected"',
+        'status.cgi$http_block': '80',
+        'status.cgi$control_mode': '"Online"',
+        'status.cgi$antipb': '"Disable"',
+        'status.cgi$antifd': '"Disable"',
+        'status.cgi$next_semac': '"None"',
+        'status.cgi$lift_ms_name': '"None"',
+        'man.cgi$serial_no': '"TNG-PRO-20170328"',
+        'man.cgi$wan_mac_addr': '"00:11:22:33:44:55"',
+        'man.cgi$lift_status': '0',
+        'if.cgi$TID': '"TNG_WEB_01"',
+        'if.cgi$wan_ip': '"192.168.1.50"',
+        'if.cgi$wan_netmask': '"255.255.255.0"',
+        'if.cgi$wan_gateway': '"192.168.1.1"',
+        'if.cgi$Reg': config.users.length,
+        'if.cgi$ava_user': 20000 - config.users.length,
+        'if.cgi$LogCount': `${config.logs.length}/0`
+    };
+
+    return html.replace(/<!-#([a-zA-Z0-9.]+)\$([a-zA-Z0-9_]+)-->/g, (match, script, variable) => {
+        const key = `${script}\$${variable}`;
+        return ssiMap[key] !== undefined ? ssiMap[key] : match;
+    });
 }
 
-// Endpoints
-app.get(['/', '/index.htm'], (req, res) => {
-    res.send(wrapLegacy('Welcome to TNG PRO', '<p class="font-2">Select a menu option to continue.</p>'));
+// Serve authentic files with SSI processing
+app.get(/\.htm$/, authMiddleware, (req, res) => {
+    const filename = path.basename(req.path);
+    const filePath = path.join(WEB_DIR, filename);
+
+    if (fs.existsSync(filePath)) {
+        let html = fs.readFileSync(filePath, 'utf8');
+        html = processSSI(html, getConfig());
+        res.send(html);
+    } else {
+        res.status(404).send('File not found in firmware assets');
+    }
 });
 
-app.get('/status.htm', (req, res) => {
+// CGI Endpoints
+app.get('/status.cgi', authMiddleware, (req, res) => {
     const config = getConfig();
-    const content = `
-        <div class="cmdtitle">System Status</div>
-        <table>
-            <tr><td class="font-3">Product Name</td><td>${process.env.BOARD_TYPE || 'TNG PRO'}</td></tr>
-            <tr><td class="font-3">Security State</td><td>${config.board.securityState}</td></tr>
-            <tr><td class="font-3">Mode</td><td>${process.env.MODE}</td></tr>
-        </table>
-    `;
-    res.send(wrapLegacy('Status Report', content));
+    res.send(`proname="${config.board.name}"&securitystate=${config.board.securityState}&fmver="C2P-Ver1.9"`);
 });
 
-app.get('/database.htm', (req, res) => {
+app.get('/man.cgi', authMiddleware, (req, res) => {
     const config = getConfig();
-    let table = '<table><tr><th>ID</th><th>Name</th><th>Card</th></tr>';
-    config.users.forEach(u => {
-        table += `<tr><td>${u.id}</td><td>${u.name}</td><td>${u.card}</td></tr>`;
-    });
-    table += '</table>';
-    res.send(wrapLegacy('User Database', table));
-});
-
-app.get('/AccLog.htm', (req, res) => {
-    const config = getConfig();
-    let table = '<table><tr><th>Time</th><th>User</th><th>Action</th><th>Door</th></tr>';
-    config.logs.slice().reverse().forEach(l => {
-        table += `<tr><td>${l.timestamp}</td><td>${l.user}</td><td>${l.action}</td><td>${l.door}</td></tr>`;
-    });
-    table += '</table>';
-    res.send(wrapLegacy('Access Log', table));
-});
-
-// Generic routes for other detected files
-const otherRoutes = [
-    'Clock.htm', 'CmdBar.htm', 'Config.htm', 'EmpRcd.htm', 'FWUpgr.htm', 
-    'SysCfg.htm', 'groups.htm', 'setgroup.htm', 'times.htm', 'holiday.htm', 
-    'Door.htm', 'DSet.htm', 'Event.htm', 'UserLog.htm', 'SysLog.htm', 
-    'Scrt.htm', 'Logout.htm'
-];
-
-otherRoutes.forEach(route => {
-    app.get(`/${route}`, (req, res) => {
-        res.send(wrapLegacy(route, `<p class="font-4">Simulated content for ${route}</p>`));
-    });
-});
-
-app.get('/man.cgi', (req, res) => {
-    const { type, securitystate } = req.query;
-    let config = getConfig();
-
-    console.log(`[ACTION] man.cgi: type=${type}, securitystate=${securitystate}`);
+    const { type, securitystate, redirect } = req.query;
 
     if (type === 'door_on' && securitystate) {
         config.board.securityState = securitystate;
-        // Simulate relay activation
-        const doorIndex = securitystate.indexOf('1');
-        if (doorIndex !== -1) {
-            config.logs.push({
-                timestamp: new Date().toISOString(),
-                user: 'Remote Command',
-                action: 'Door Opened',
-                door: doorIndex + 1
-            });
-        }
+        config.logs.push({
+            timestamp: new Date().toISOString(),
+            user: 'Remote Admin',
+            action: 'OPEN DOOR',
+            door: 'All (Security State Change)'
+        });
         saveConfig(config);
-        return res.send('OK');
     }
 
-    if (type === 'door_status') {
-        return res.send(`door_status=${config.doors.map(d => d.status).join(',')}`);
+    if (redirect) {
+        return res.redirect(redirect);
     }
-
-    res.status(400).send('Invalid command');
+    res.send('OK');
 });
 
-app.get('/if.cgi', (req, res) => {
-    const { type, page } = req.query;
-    const config = getConfig();
-
-    console.log(`[QUERY] if.cgi: type=${type}, page=${page}`);
-
-    if (type === 'go_log_page') {
-        // Return logs in a simple format (usually HTML table or specific text)
-        let logHtml = '<table><tr><th>Time</th><th>User</th><th>Action</th></tr>';
-        config.logs.slice().reverse().forEach(log => {
-            logHtml += `<tr><td>${log.timestamp}</td><td>${log.user}</td><td>${log.action}</td></tr>`;
-        });
-        logHtml += '</table>';
-        return res.send(logHtml);
-    }
-
-    if (type === 'go_user_page') {
-        let userHtml = '<table><tr><th>ID</th><th>Name</th><th>Card</th></tr>';
-        config.users.forEach(user => {
-            userHtml += `<tr><td>${user.id}</td><td>${user.name}</td><td>${user.card}</td></tr>`;
-        });
-        userHtml += '</table>';
-        return res.send(userHtml);
-    }
-
-    res.status(400).send('Invalid query');
+app.get('/if.cgi', authMiddleware, (req, res) => {
+    const { redirect } = req.query;
+    if (redirect) return res.redirect(redirect);
+    res.send('OK');
 });
 
-// Admin API for the dashboard (not part of the simulated board API)
-app.get('/api/state', (req, res) => {
-    const config = getConfig();
-    res.json({
-        ...config,
-        env: {
-            mode: process.env.MODE,
-            latency: process.env.LATENCY_MS,
-            user: process.env.BOARD_USER,
-            pass: process.env.BOARD_PASS
-        }
-    });
+// Static Assets (Images, CSS, JS)
+app.use(express.static(WEB_DIR));
+
+// Simulation Control API (Moderno Access Dashboard)
+app.get('/api/simulator/status', (req, res) => {
+    res.json(getConfig());
 });
 
-app.post('/api/config', (req, res) => {
-    saveConfig(req.body);
-    res.json({ success: true });
-});
-
-app.post('/api/mode', (req, res) => {
-    const { mode, latency, user, pass } = req.body;
-    if (mode) process.env.MODE = mode;
-    if (latency !== undefined) process.env.LATENCY_MS = latency;
-    if (user) process.env.BOARD_USER = user;
-    if (pass) process.env.BOARD_PASS = pass;
-    
-    console.log(`[SIM] Configuration updated: mode=${process.env.MODE}, latency=${process.env.LATENCY_MS}`);
-    res.json({ success: true, current: { 
-        mode: process.env.MODE, 
-        latency: process.env.LATENCY_MS,
-        user: process.env.BOARD_USER,
-        pass: process.env.BOARD_PASS
-    }});
+app.post('/api/simulator/mode', (req, res) => {
+    process.env.MODE = req.body.mode;
+    res.json({ success: true, mode: process.env.MODE });
 });
 
 app.listen(PORT, () => {
-    console.log(`Moderno Access Virtual Plate running at http://localhost:${PORT}`);
-    console.log(`Mode: ${process.env.MODE}`);
-    console.log(`Relays: ${process.env.RELAYS}`);
+    console.log(`Authentic TNG PRO WebServer Simulator running at http://localhost:${PORT}`);
+    console.log(`Serving firmware assets from: ${WEB_DIR}`);
 });
