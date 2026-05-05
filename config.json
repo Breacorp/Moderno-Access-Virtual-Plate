@@ -1,0 +1,18 @@
+{
+  "board": {
+    "name": "Moderno Access Virtual Plate",
+    "version": "1.0.0-sim",
+    "securityState": "10000000"
+  },
+  "doors": [
+    { "id": 1, "name": "Entrada Principal", "status": "closed" },
+    { "id": 2, "name": "Salida Emergencia", "status": "closed" }
+  ],
+  "users": [
+    { "id": 1, "name": "Demo Admin", "card": "12345678", "pin": "1234" },
+    { "id": 2, "name": "Demo User", "card": "87654321", "pin": "4321" }
+  ],
+  "logs": [
+    { "timestamp": "2026-05-05T17:00:00Z", "user": "Demo Admin", "action": "Access Granted", "door": 1 }
+  ]
+}
