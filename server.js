@@ -411,3 +411,5 @@ app.use(express.static(WEB_DIR));
 app.listen(PORT, () => {
     console.log(`Authentic TNG PRO WebServer Simulator running at http://localhost:${PORT}`);
 });
+
+module.exports = app;
