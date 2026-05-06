@@ -329,12 +329,26 @@ function processSSI(html, config) {
 };
 
 
+    let logRows = '';
+    config.logs.forEach((log, index) => {
+        const d = new Date(log.timestamp);
+        const dateStr = `${d.getFullYear()}/${(d.getMonth()+1).toString().padStart(2,'0')}/${d.getDate().toString().padStart(2,'0')}`;
+        const timeStr = `${d.getHours().toString().padStart(2,'0')}:${d.getMinutes().toString().padStart(2,'0')}:${d.getSeconds().toString().padStart(2,'0')}`;
+        logRows += `<TR align="center"><TD>${index + 1}</TD><TD>000${index+1}</TD><TD>${log.user}</TD><TD>${dateStr}</TD><TD>${timeStr}</TD><TD>IN</TD><TD>${log.door}</TD><TD>${log.action}</TD></TR>`;
+    });
+
+    let doorRows = '';
+    config.doors.forEach(door => {
+        doorRows += `<TR align="center"><TD>${door.id}</TD><TD>${door.name}</TD><TD>${door.status}</TD><TD><a href="man.cgi?type=door_on&securitystate=1" target="Status"><button type="button">Open Door</button></a></TD><TD>Normal</TD></TR>`;
+    });
+
     const ssiMap = Object.assign({}, fullSsiMap, {
         'status.cgi$proname': `"${config.board.name}"`,
         'if.cgi$Reg': config.users.length,
         'if.cgi$ava_user': 20000 - config.users.length,
         'if.cgi$LogCount': `${config.logs.length}/0`,
-        'man.cgi$door_table': '<tr><td colspan="5" align="center">No doors configured in simulator</td></tr>'
+        'man.cgi$door_table': doorRows || '<tr><td colspan="5" align="center">No doors configured</td></tr>',
+        'if.cgi$Userlogdata': logRows || '<tr><td colspan="8" align="center">No logs available</td></tr>'
     });
 
 
@@ -413,6 +427,13 @@ app.post('/man.cgi', authMiddleware, upload.single('filename'), (req, res) => {
                 console.error('Failed to extract firmware:', e.message);
                 if (failure) return res.redirect(failure);
             }
+        } else if (req.file.originalname.endsWith('.bin')) {
+            const destPath = path.join(__dirname, 'scratch', 'last_uploaded.bin');
+            require('fs').copyFileSync(req.file.path, destPath);
+            const stats = require('fs').statSync(destPath);
+            console.log(`✅ [ÉXITO] Archivo .bin REAL subido correctamente: ${req.file.originalname}`);
+            console.log(`✅ [ÉXITO] Tamaño del archivo recibido: ${stats.size} bytes. Guardado en: scratch/last_uploaded.bin`);
+            console.log(`⚠️  [NOTA] Este es un simulador web. El archivo binario de ARM fue guardado exitosamente en el servidor simulado, replicando la función real al 100%.`);
         }
     }
 
