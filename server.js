@@ -5,10 +5,13 @@ const morgan = require('morgan');
 const auth = require('basic-auth');
 const dotenv = require('dotenv');
 const multer = require('multer');
+const axios = require('axios');
+const cors = require('cors');
 
 dotenv.config();
 
 const app = express();
+app.use(cors()); // Enable CORS for local web integration
 const upload = multer({ dest: path.join(__dirname, 'scratch/uploads/') });
 const PORT = process.env.PORT || 8080;
 const CONFIG_PATH = path.join(__dirname, 'config.json');
@@ -16,6 +19,10 @@ const WEB_DIR = path.join(__dirname, 'public');
 
 app.use(morgan('dev'));
 app.use(express.json());
+
+// Cloud / Local Web Integration Configuration
+const SERIAL_NUMBER = process.env.SERIAL_NUMBER || 'TNG20260506';
+const WEBHOOK_URL = process.env.WEBHOOK_URL; // URL of your web platform to receive events
 
 // Simulation State
 function getConfig() {
@@ -42,20 +49,88 @@ const authMiddleware = (req, res, next) => {
 
 let activeUserEditId = null;
 
-// SSI Processor
+// --- Cloud Bridge Integration ---
+
+async function reportEventToCloud(action, user, door) {
+    if (!WEBHOOK_URL) {
+        console.log(`[Simulator] No WEBHOOK_URL defined. Event: ${action} - ${user}`);
+        return;
+    }
+    console.log(`[Cloud] Sending webhook: ${action} - ${user} -> ${WEBHOOK_URL}`);
+    try {
+        await axios.post(WEBHOOK_URL, {
+            serial: SERIAL_NUMBER,
+            timestamp: new Date().toISOString(),
+            user: user,
+            action: action,
+            door: door
+        }, { timeout: 2000 });
+    } catch (err) {
+        console.error(`[Webhook Error] Failed to send to ${WEBHOOK_URL}: ${err.message}`);
+    }
+}
+
+async function syncWithCloud() {
+    if (!WEBHOOK_URL) return; // Only sync if we have a target
+    // ... logic for syncing if needed, otherwise rely on web calling the plate endpoints directly
+}
+
+function openDoorLocally(doorName, userName) {
+    const config = getConfig();
+    const log = {
+        id: Date.now().toString(),
+        timestamp: new Date().toISOString(),
+        user: userName,
+        action: 'Open Door',
+        door: doorName
+    };
+    config.logs.unshift(log);
+    saveConfig(config);
+    
+    // If it's a local action, we'd normally trigger relays here
+    console.log(`[Hardware] Door ${doorName} opened by ${userName}`);
+    
+    // If this was triggered locally, we should report it to cloud
+    // (In this case, if it's 'Remote Web' we don't report back to avoid loops, 
+    // but usually plates report EVERYTHING)
+    reportEventToCloud('Open Door', userName, doorName);
+}
+
+// Polling Interval (every 15 seconds to avoid saturation during dev)
+setInterval(syncWithCloud, 15000);
+
+// --- SSI Processor ---
 function processSSI(html, config) {
     const fullSsiMap = {
+        // CGI / Setup Defaults
+        'man.cgi$get_event_group': '0',
+        'man.cgi$event_hold': '10,10,10,10,10',
+        'man.cgi$alarm_list': '0,0,0,0,0,0,0,0,0,0,0,0,0,0',
+        'man.cgi$ipc_list': '0,0,0,0,0,0,0,0,0,0,0,0,0,0',
+        'man.cgi$event_list_g1': '0,0,0,0,0,0,0,0,0,0,0,0,0,0',
+        'man.cgi$event_list_g2': '0,0,0,0,0,0,0,0,0,0,0,0,0,0',
+        'man.cgi$event_list_g3': '0,0,0,0,0,0,0,0,0,0,0,0,0,0',
+        'man.cgi$lift_status': '0',
+        'man.cgi$door_status': '0',
+        'man.cgi$BF50_Staus': '0',
+        'man.cgi$Control_M_Staus': '0',
+        'man.cgi$Door_num_Staus': '0',
+        'man.cgi$fire_Staus': '0',
+        'man.cgi$group_list': '',
+        'man.cgi$timezone_list': '',
+        'man.cgi$holiday_list': '',
+        'man.cgi$group_time_zones': '',
+        'man.cgi$timezone_times': '0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0',
+        'man.cgi$timezone_id': '1',
+        
+        // IF CGI / User Defaults
+        'man.cgi$door_status': '<tr><td>D1</td><td>OK</td><td>OK</td><td>OK</td><td>OK</td><td>OK</td><td>OK</td><td>OK</td><td>OK</td></tr><tr><td>D2</td><td>OK</td><td>OK</td><td>OK</td><td>OK</td><td>OK</td><td>OK</td><td>OK</td><td>OK</td></tr><tr><td>D3</td><td>OK</td><td>OK</td><td>OK</td><td>OK</td><td>OK</td><td>OK</td><td>OK</td><td>OK</td></tr><tr><td>D4</td><td>OK</td><td>OK</td><td>OK</td><td>OK</td><td>OK</td><td>OK</td><td>OK</td><td>OK</td></tr><tr><td>D5</td><td>OK</td><td>OK</td><td>OK</td><td>OK</td><td>OK</td><td>OK</td><td>OK</td><td>OK</td></tr>',
+        'man.cgi$lift_table_status': '<tr><td>L1</td><td>OK</td><td>OK</td><td>OK</td><td>OK</td><td>OK</td><td>OK</td><td>OK</td><td>OK</td></tr><tr><td>L2</td><td>OK</td><td>OK</td><td>OK</td><td>OK</td><td>OK</td><td>OK</td><td>OK</td><td>OK</td></tr>',
         'if.cgi$maxusernum': '20000',
         'if.cgi$fc_card_snc': '0',
-        'status.cgi$HEX_DEC': '0',
-        'status.cgi$language': '2',
-        'if.cgi$Event_List': '"1","2","3"',
         'if.cgi$reg_state': '0',
-        'if.cgi$card_snc': '0',
         'if.cgi$maxuser': '20000',
-        'if.cgi$emp_title': '"User Record"',
-        'if.cgi$Password': '""',
-        'if.cgi$user_name': '""',
+        'if.cgi$emp_title': 'User Record',
         'if.cgi$Verify': '0',
         'if.cgi$user_group_0': '0',
         'if.cgi$user_group_1': '0',
@@ -76,265 +151,53 @@ function processSSI(html, config) {
         'if.cgi$radio_deactivate': '',
         'if.cgi$Card_Valid_Disable': '',
         'if.cgi$Card_Valid_Enable': 'checked',
-        'man.cgi$lift_status': '0',
-        'status.cgi$log_pw_on': '""',
-        'if.cgi$Userlogdata': '',
-        'if.cgi$syslog': '',
-        'if.cgi$userid': '',
-        'if.cgi$id': '""',
-        'if.cgi$logid': '',
-        'if.cgi$markid': '""',
-        'if.cgi$mlogid': '',
-        'if.cgi$next_emp': '',
-        'if.cgi$prev_emp': '',
-        'if.cgi$TID': '""',
-        'if.cgi$Reg': '0',
-        'if.cgi$LogCount': '0/0',
-        'if.cgi$ava_user': '20000',
-        'if.cgi$wan_gateway': '0.0.0.0',
-        'if.cgi$wan_ip': '0.0.0.0',
-        'if.cgi$wan_netmask': '0.0.0.0',
-        'man.cgi$BF50_Staus': '0',
-        'man.cgi$Control_M_Staus': '0',
-        'man.cgi$Door_num_Staus': '0',
-        'man.cgi$GListID': '',
-        'man.cgi$TZListID': '',
-        'man.cgi$adjust_backward': '',
-        'man.cgi$adjust_forward': '',
-        'man.cgi$admin_key_pwd': '',
-        'man.cgi$alarm_list': '',
-        'man.cgi$allow_door_0': '',
-        'man.cgi$allow_door_1': '',
-        'man.cgi$allow_door_2': '',
-        'man.cgi$allow_door_3': '',
-        'man.cgi$allow_door_4': '',
-        'man.cgi$allow_door_5': '',
-        'man.cgi$allow_door_6': '',
-        'man.cgi$allow_door_7': '',
-        'man.cgi$common_key_pwd': '',
-        'man.cgi$dis_sntp_server': '',
-        'man.cgi$door_id': '',
-        'man.cgi$door_name': '',
-        'man.cgi$door_rest_link': '',
-        'man.cgi$door_status': '0',
-        'man.cgi$door_switch': '',
-        'man.cgi$door_table': '',
-        'man.cgi$doors': '',
-        'man.cgi$dst_bias': '',
-        'man.cgi$dst_end_day': '',
-        'man.cgi$dst_end_month': '',
-        'man.cgi$dst_off': '',
-        'man.cgi$dst_on': '',
-        'man.cgi$dst_start_day': '',
-        'man.cgi$dst_start_month': '',
-        'man.cgi$en_sntp_server': '',
-        'man.cgi$event_hold': '',
-        'man.cgi$event_list_g1': '',
-        'man.cgi$event_list_g2': '',
-        'man.cgi$event_list_g3': '',
-        'man.cgi$extra_sntp_server': '',
-        'man.cgi$fire_Staus': '0',
-        'man.cgi$get_event_group': '',
-        'man.cgi$get_smtp_switch': '',
-        'man.cgi$group': '',
-        'man.cgi$group_list': '',
-        'man.cgi$group_time_zones': '',
-        'man.cgi$group_timezone_0': '',
-        'man.cgi$group_timezone_1': '',
-        'man.cgi$group_timezone_2': '',
-        'man.cgi$group_timezone_3': '',
-        'man.cgi$group_timezone_4': '',
-        'man.cgi$group_timezone_5': '',
-        'man.cgi$group_timezone_6': '',
-        'man.cgi$group_timezone_7': '',
-        'man.cgi$holiday': '',
-        'man.cgi$ipc_list': '',
-        'man.cgi$lift_enable': '',
-        'man.cgi$lift_list': '',
-        'man.cgi$lift_status': '0',
-        'man.cgi$lift_table_status': '',
-        'man.cgi$log_tail': '',
-        'man.cgi$mail_domainname': '',
-        'man.cgi$mail_return': '',
-        'man.cgi$mail_server': '',
-        'man.cgi$mail_to': '',
-        'man.cgi$reg_key_pwd': '',
-        'man.cgi$serial_no': 'TNG-PRO-20170328',
-        'man.cgi$smtp_mail_from': '',
-        'man.cgi$smtp_name': '',
-        'man.cgi$smtp_pw': '',
-        'man.cgi$sntp_tz': '',
+        'if.cgi$Event_List': '1,2,3',
+        
+        // Status Defaults
         'man.cgi$time_zone': '',
-        'man.cgi$times': '',
-        'man.cgi$timezone_id': '',
-        'man.cgi$timezone_list': '',
-        'man.cgi$timezone_times': '',
-        'man.cgi$user_group': '',
-        'man.cgi$wan_mac_addr': '00:00:00:00:00:00',
-        'man.cgi$wp_ip': '0.0.0.0',
-        'man.cgi$wp_port': '80',
-        'status.cgi$Accessories1': '0',
-        'status.cgi$Accessories2': '0',
-        'status.cgi$Accessories3': '0',
-        'status.cgi$BYPASS_MODE': '0',
-        'status.cgi$DEC_ON': '0',
-        'status.cgi$HEX_DEC': '0',
-        'status.cgi$HEX_ON': '0',
-        'status.cgi$LOGO_Default': '0',
-        'status.cgi$LOGO_OFF': '0',
-        'status.cgi$Lift_Type1': '0',
-        'status.cgi$Lift_Type2': '0',
-        'status.cgi$Log_1': '0',
-        'status.cgi$Log_2': '0',
-        'status.cgi$Log_3': '0',
-        'status.cgi$Log_4': '0',
-        'status.cgi$Log_5': '0',
-        'status.cgi$Log_6': '0',
-        'status.cgi$Log_7': '0',
-        'status.cgi$Log_8': '0',
-        'status.cgi$Max_User': '20000',
-        'status.cgi$Security_Status': '0',
-        'status.cgi$add_list': '',
-        'status.cgi$admin_name': '0',
-        'status.cgi$admin_pwd': '0',
-        'status.cgi$anti_fd_pwd': '0',
-        'status.cgi$anti_pb_period': '0',
-        'status.cgi$antifd': '0',
-        'status.cgi$antipb': '0',
-        'status.cgi$ap_tcpc1': '0',
-        'status.cgi$ap_tcps_port': '0',
-        'status.cgi$bf50_card_list': '',
-        'status.cgi$blacklist_sw_off': '0',
-        'status.cgi$blacklist_sw_on': '0',
-        'status.cgi$both_relay_control': '0',
-        'status.cgi$camara_id_in': '0',
-        'status.cgi$camara_id_out': '0',
-        'status.cgi$camara_inout_1': '0',
-        'status.cgi$camara_inout_2': '0',
-        'status.cgi$camara_inout_3': '0',
-        'status.cgi$camara_inout_4': '0',
-        'status.cgi$camara_inout_5': '0',
-        'status.cgi$camara_inout_6': '0',
-        'status.cgi$camara_inout_7': '0',
-        'status.cgi$camara_inout_8': '0',
-        'status.cgi$cctv_ip': '0',
-        'status.cgi$cctv_port': '0',
-        'status.cgi$control_mode': 'Online',
-        'status.cgi$control_mode_number': '0',
-        'status.cgi$del_list': '',
-        'status.cgi$dhcp_off': '0',
-        'status.cgi$dhcp_on': '0',
-        'status.cgi$dis_anti_forced': '0',
-        'status.cgi$dis_anti_pass_back': '0',
-        'status.cgi$dis_fast_reg_card': '0',
-        'status.cgi$door_num4': '0',
-        'status.cgi$door_num8': '0',
-        'status.cgi$en_anti_follow': '0',
-        'status.cgi$en_anti_forced': '0',
-        'status.cgi$en_anti_pass_back': '0',
-        'status.cgi$en_fast_reg_card': '0',
-        'status.cgi$end_log': '0',
-        'status.cgi$facility_id_format': '0',
-        'status.cgi$fcode_A1': '0',
-        'status.cgi$fcode_A3': '0',
-        'status.cgi$fcode_A5': '0',
-        'status.cgi$fcode_A7': '0',
-        'status.cgi$fcode_B1': '0',
-        'status.cgi$fcode_B3': '0',
-        'status.cgi$fcode_B5': '0',
-        'status.cgi$fcode_B7': '0',
-        'status.cgi$fcode_C1': '0',
-        'status.cgi$fcode_C3': '0',
-        'status.cgi$fmver': 'C2P-Ver1.9',
-        'status.cgi$http_block': '0',
-        'status.cgi$hwver': '2.0',
-        'status.cgi$in_relay_control': '0',
-        'status.cgi$ip_name': '0',
-        'status.cgi$ip_own_define_0': '0',
-        'status.cgi$ip_own_define_1': '0',
-        'status.cgi$ip_own_define_2': '0',
-        'status.cgi$ip_own_define_3': '0',
-        'status.cgi$ip_own_define_4': '0',
-        'status.cgi$ip_own_define_5': '0',
-        'status.cgi$ip_own_define_6': '0',
-        'status.cgi$ip_own_define_7': '0',
-        'status.cgi$ip_own_define_type_selsct': '0',
-        'status.cgi$ip_own_define_type_selsct_0': '0',
-        'status.cgi$ip_own_define_type_selsct_1': '0',
-        'status.cgi$ip_own_define_type_selsct_2': '0',
-        'status.cgi$ip_own_define_type_selsct_3': '0',
-        'status.cgi$ip_own_define_type_selsct_4': '0',
-        'status.cgi$ip_own_define_type_selsct_5': '0',
-        'status.cgi$ip_own_define_type_selsct_6': '0',
-        'status.cgi$ip_own_define_type_selsct_7': '0',
-        'status.cgi$ip_pw': '0',
-        'status.cgi$ip_type': '0',
-        'status.cgi$ip_type_select': '0',
-        'status.cgi$language': '0',
-        'status.cgi$language_set': '0',
-        'status.cgi$lift_m': '0',
-        'status.cgi$lift_ms': '0',
-        'status.cgi$lift_ms_name': '0',
-        'status.cgi$lift_s': '0',
-        'status.cgi$log_pw_off': '0',
-        'status.cgi$log_pw_on': 'checked',
+        'man.cgi$TZListID': '1',
+        'status.cgi$weblog_set': '1',
         'status.cgi$logo_set': '0',
-        'status.cgi$logo_show': '0',
-        'status.cgi$md5_signal': '0',
-        'status.cgi$mini52_fwver': '0',
-        'status.cgi$mini52_type': '0',
-        'status.cgi$modelname': '0',
-        'status.cgi$module_type': 'SEMAC-D2',
-        'status.cgi$next_semac': '0',
-        'status.cgi$one_door': '0',
-        'status.cgi$out_relay_control': '0',
-        'status.cgi$outdate': '0',
-        'status.cgi$pdns': '0',
-        'status.cgi$pdns1': '0',
-        'status.cgi$pdns2': '0',
-        'status.cgi$pdns3': '0',
-        'status.cgi$pdns4': '0',
-        'status.cgi$productname': '0',
-        'status.cgi$proname': `"${config.board.name}"`,
-        'status.cgi$raw_id_format': '0',
-        'status.cgi$semac_ip1': '0',
-        'status.cgi$semac_ip2': '0',
-        'status.cgi$semac_ip3': '0',
-        'status.cgi$semac_ip4': '0',
-        'status.cgi$soft_status': 'Connected',
-        'status.cgi$success_info': '0',
-        'status.cgi$sw_mode': '0',
-        'status.cgi$trun_web': '0',
-        'status.cgi$two_door': '0',
-        'status.cgi$uptime': '12 days, 04:22:11',
-        'status.cgi$user_0_name': '0',
-        'status.cgi$user_0_pwd': '0',
-        'status.cgi$user_name': '0',
-        'status.cgi$user_pwd': '0',
-        'status.cgi$wan_fix_gateway1': '0',
-        'status.cgi$wan_fix_gateway2': '0',
-        'status.cgi$wan_fix_gateway3': '0',
-        'status.cgi$wan_fix_gateway4': '0',
-        'status.cgi$wan_fix_ip1': '0',
-        'status.cgi$wan_fix_ip2': '0',
-        'status.cgi$wan_fix_ip3': '0',
-        'status.cgi$wan_fix_ip4': '0',
-        'status.cgi$wan_fix_netmask1': '0',
-        'status.cgi$wan_fix_netmask2': '0',
-        'status.cgi$wan_fix_netmask3': '0',
-        'status.cgi$wan_fix_netmask4': '0',
-        'status.cgi$we_in_v': '0',
-        'status.cgi$web_language': '0',
+        'status.cgi$logo_show': 'logo.png',
+        'status.cgi$weblog_show': 'logo.png',
+        'status.cgi$HEX_DEC': '0',
+        'status.cgi$Security_Status': '2,2,2,2,2,2,2,2',
+        'status.cgi$modelname': '3',
+        'status.cgi$control_mode_number': '0',
+        'status.cgi$lift_ms': '0',
+        'status.cgi$language': '2',
         'status.cgi$web_mode': '0',
-        'status.cgi$weblog_set': '0',
-};
+        'status.cgi$log_pw_on': 'checked',
+        'status.cgi$end_log': '0',
+        'status.cgi$ver': 'C2P-Ver1.9',
+        'status.cgi$hwver': '2.0',
+        'status.cgi$uptime': '12 days, 04:22:11',
+        'status.cgi$mac': '00:00:00:00:00:00',
+        'status.cgi$ip': '192.168.1.100',
+        'status.cgi$mask': '255.255.255.0',
+        'status.cgi$gateway': '192.168.1.1',
+    };
 
     let logRows = '';
     config.logs.forEach((log, index) => {
         const d = new Date(log.timestamp);
         const dateStr = `${d.getFullYear()}/${(d.getMonth()+1).toString().padStart(2,'0')}/${d.getDate().toString().padStart(2,'0')}`;
         const timeStr = `${d.getHours().toString().padStart(2,'0')}:${d.getMinutes().toString().padStart(2,'0')}:${d.getSeconds().toString().padStart(2,'0')}`;
-        logRows += `<TR align="center"><TD>${index + 1}</TD><TD>000${index+1}</TD><TD>${log.user}</TD><TD>${dateStr}</TD><TD>${timeStr}</TD><TD>IN</TD><TD>${log.door}</TD><TD>${log.action}</TD></TR>`;
+        
+        let actionClass = 'log-info';
+        if (log.action.includes('Open')) actionClass = 'log-success';
+        if (log.action.includes('Update') || log.action.includes('Create')) actionClass = 'log-warning';
+        
+        logRows += `<TR align="center" class="${actionClass}">
+            <TD>${index + 1}</TD>
+            <TD>000${index+1}</TD>
+            <TD><strong>${log.user}</strong></TD>
+            <TD>${dateStr}</TD>
+            <TD>${timeStr}</TD>
+            <TD><span class="badge">IN</span></TD>
+            <TD>${log.door}</TD>
+            <TD><i>${log.action}</i></TD>
+        </TR>`;
     });
 
     let doorRows = '';
@@ -342,43 +205,83 @@ function processSSI(html, config) {
         doorRows += `<TR align="center"><TD>${door.id}</TD><TD>${door.name}</TD><TD>${door.status}</TD><TD><a href="man.cgi?type=door_on&securitystate=1" target="Status"><button type="button">Open Door</button></a></TD><TD>Normal</TD></TR>`;
     });
 
+    const activeUser = config.users.find(u => u.id === activeUserEditId) || { id: '', name: '', card: '', pin: '' };
+
     let userRows = '';
     config.users.forEach((user, index) => {
-        userRows += `<TR><td nowrap><font size=1 face=Arial><INPUT TYPE='CHECKBOX' NAME='SELECT' VALUE='${user.id}'>${index+1}.</font></td><td ALIGN=CENTER nowrap><A target='Status' HREF='if.cgi?redirect=HmEmpRcd.htm&failure=fail.htm&type=want_emp&id=${user.id}'>${user.id}</A></td><td ALIGN=CENTER nowrap>${user.name}</td><td ALIGN=CENTER>Normal</td><td><font size=1 face=Arial color=#000000><IMG SRC='v.gif'></font></td><td>V</td><td>V</td><td><P ALIGN=CENTER><font size=1 face=Arial color=#000000>0</font></P></td></TR>`;
+        userRows += `<TR align="center"><TD>${index + 1}</TD><TD><a href="if.cgi?redirect=EmpRcd.htm&type=user_edit&id=${user.id}">${user.id}</a></TD><TD>${user.name}</TD><TD>${user.card}</TD><TD>Active</TD><TD><a href="if.cgi?redirect=database.htm&type=user_delete&id=${user.id}">[Del]</a></TD></TR>`;
     });
-
-    const activeUser = config.users.find(u => u.id === activeUserEditId) || { id: '', name: '', card: '', pin: '' };
 
     const ssiMap = Object.assign({}, fullSsiMap, {
         'status.cgi$proname': `"${config.board.name}"`,
-        'if.cgi$Reg': config.users.length,
-        'if.cgi$ava_user': 20000 - config.users.length,
+        'if.cgi$Reg': config.users.length.toString(),
+        'if.cgi$ava_user': (20000 - config.users.length).toString(),
         'if.cgi$maxuser': '20000',
         'if.cgi$maxusernum': config.users.length.toString(),
         'if.cgi$LogCount': `${config.logs.length}/0`,
+        'if.cgi$prev_emp': '',
+        'if.cgi$next_emp': '',
+        'if.cgi$TID': 'TNG-PRO-V1',
+        'if.cgi$wan_ip': '192.168.1.100',
+        'if.cgi$wan_netmask': '255.255.255.0',
+        'if.cgi$wan_gateway': '192.168.1.1',
+        'man.cgi$serial_no': 'TNG20260506',
+        'man.cgi$wan_mac_addr': '00:1A:2B:3C:4D:5E',
+        'status.cgi$outdate': '2026/05/06',
+        'status.cgi$md5_signal': '',
+        'status.cgi$fmver': 'V1.9.0328',
+        'status.cgi$hwver': '2.0',
+        'status.cgi$module_type': 'TNG-PRO-C2P',
+        'status.cgi$pdns': '8.8.8.8',
+        'status.cgi$ap_tcps_port': '443',
+        'status.cgi$ap_tcpc1': 'access.moderno.com.ar',
+        'status.cgi$soft_status': 'Connected',
+        'status.cgi$http_block': '443',
+        'status.cgi$control_mode': 'Cloud Mode',
+        'status.cgi$antipb': 'Disabled',
+        'status.cgi$antifd': 'Enabled',
+        'status.cgi$next_semac': 'None',
+        'status.cgi$lift_ms_name': 'Master',
+        'status.cgi$Max_User': '20000',
+        'status.cgi$mini52_type': '',
+        'status.cgi$mini52_fwver': '',
+        'status.cgi$uptime': new Date().toLocaleString(),
+        'status.cgi$language_set': '1,1,1',
+        'status.cgi$add_list': '0,0,0',
+        'status.cgi$del_list': '0,0,0',
+        'status.cgi$web_language': '2',
+        'status.cgi$BYPASS_MODE': '0',
+        'status.cgi$dhcp_off': 'checked',
+        'status.cgi$dhcp_on': '',
+        'dhcpc.cgi$hostname': 'TNG-PRO-VIRTUAL',
+        'status.cgi$wan_fix_ip1': '192', 'status.cgi$wan_fix_ip2': '168', 'status.cgi$wan_fix_ip3': '1', 'status.cgi$wan_fix_ip4': '100',
+        'status.cgi$wan_fix_netmask1': '255', 'status.cgi$wan_fix_netmask2': '255', 'status.cgi$wan_fix_netmask3': '255', 'status.cgi$wan_fix_netmask4': '0',
+        'status.cgi$wan_fix_gateway1': '192', 'status.cgi$wan_fix_gateway2': '168', 'status.cgi$wan_fix_gateway3': '1', 'status.cgi$wan_fix_gateway4': '1',
+        'status.cgi$pdns1': '8', 'status.cgi$pdns2': '8', 'status.cgi$pdns3': '8', 'status.cgi$pdns4': '8',
         'man.cgi$door_table': doorRows || '<tr><td colspan="5" align="center">No doors configured</td></tr>',
+        'if.cgi$logid': logRows || '<tr><td colspan="8" align="center">No logs available</td></tr>',
         'if.cgi$Userlogdata': logRows || '<tr><td colspan="8" align="center">No logs available</td></tr>',
         'if.cgi$syslog': logRows || '<tr><td colspan="8" align="center">No logs available</td></tr>',
         'if.cgi$userid': userRows || '<tr><td colspan="8" align="center">No Users</td></tr>',
-        'if.cgi$id': activeUser.id || '""',
-        'if.cgi$user_name': `"${activeUser.name || ''}"`,
-        'if.cgi$Password': `"${activeUser.pin || ''}"`,
-        'if.cgi$card_snc': `"${activeUser.card || ''}"`,
-        'status.cgi$end_log': `"${config.logs.length}"`,
-        'man.cgi$log_tail': `${config.logs.length}`
+        'if.cgi$id': activeUser.id || '',
+        'if.cgi$markid': activeUser.id || '',
+        'if.cgi$user_name': activeUser.name || '',
+        'if.cgi$Password': activeUser.pin || '',
+        'if.cgi$card_snc': activeUser.card || '',
+        'status.cgi$end_log': config.logs.length.toString(),
+        'man.cgi$log_tail': config.logs.length.toString()
     });
-
 
     return html.replace(/<!-#([a-zA-Z0-9.]+)\$([a-zA-Z0-9_]+)-->/g, (match, script, variable) => {
         const key = `${script}\$${variable}`;
         if (ssiMap[key] !== undefined) {
             return ssiMap[key];
         }
-        return '0'; // Default fallback for all unmapped tags to prevent JS SyntaxError
+        return '0'; 
     });
 }
 
-// Serve authentic files with SSI processing
+// Routes
 app.get(['/', '/index.htm'], authMiddleware, (req, res) => {
     const filePath = path.join(WEB_DIR, 'index.htm');
     if (fs.existsSync(filePath)) {
@@ -403,118 +306,108 @@ app.get(/\.htm$/, authMiddleware, (req, res) => {
     }
 });
 
-// CGI Endpoints
-app.get('/status.cgi', authMiddleware, (req, res) => {
+app.all('/status.cgi', authMiddleware, (req, res) => {
+    const params = Object.assign({}, req.query, req.body);
+    const { a, b, c } = params;
     const config = getConfig();
-    res.send(`proname="${config.board.name}"&securitystate=${config.board.securityState}&fmver="C2P-Ver1.9"`);
-});
 
-app.get('/man.cgi', authMiddleware, (req, res) => {
-    const config = getConfig();
-    const { type, securitystate, redirect } = req.query;
-
-    if (type === 'door_on' && securitystate) {
-        config.board.securityState = securitystate;
-        config.logs.push({
-            timestamp: new Date().toISOString(),
-            user: 'Remote Admin',
-            action: 'OPEN DOOR',
-            door: 'All (Security State Change)'
-        });
-        saveConfig(config);
+    if (a === 'new_log') {
+        const config = getConfig();
+        const clientLogCount = parseInt(b);
+        const serverLogCount = config.logs.length;
+        
+        // If there are no new logs, return a small value so the client keeps polling
+        if (serverLogCount <= clientLogCount) {
+            return res.send('0');
+        }
+        
+        // Get the most recent log that the client hasn't seen yet
+        // Since we use unshift(), the newest log is at index 0
+        const latestLog = config.logs[0];
+        const user = config.users.find(u => u.name === latestLog.user) || { id: '0', name: latestLog.user };
+        
+        const now = new Date(latestLog.timestamp);
+        const dateStr = `${now.getFullYear()}/${(now.getMonth() + 1).toString().padStart(2, '0')}/${now.getDate().toString().padStart(2, '0')}`;
+        const timeStr = `${now.getHours().toString().padStart(2, '0')}:${now.getMinutes().toString().padStart(2, '0')}:${now.getSeconds().toString().padStart(2, '0')}`;
+        
+        // CSV Format for autolog.htm: UserID, UserName, Date, Time, IN/OUT, Door, Note, NextTail
+        const response = `${user.id || '0'},${user.name},${dateStr},${timeStr},IN,${latestLog.door},${latestLog.action},${serverLogCount}`;
+        
+        return res.send(response);
     }
 
-    if (redirect) {
-        return res.redirect(redirect);
+    if (params.redirect) {
+        return res.redirect(params.redirect);
     }
     res.send('OK');
 });
 
-app.post('/man.cgi', authMiddleware, upload.single('filename'), (req, res) => {
-    const { type, redirect, failure } = req.body;
+app.all('/man.cgi', authMiddleware, (req, res) => {
+    const params = Object.assign({}, req.query, req.body);
+    const { type, id, securitystate } = params;
+    const config = getConfig();
 
-    if (type === 'file_upload' && req.file) {
-        console.log(`Received firmware upload: ${req.file.originalname}`);
-        if (req.file.originalname.endsWith('.web')) {
-            try {
-                // Extract the .web file contents into public/ and firmware_web/
-                require('child_process').execSync(`node scratch/final_extraction.js "${req.file.path}"`);
-                console.log('Firmware Web assets successfully extracted and applied!');
-            } catch (e) {
-                console.error('Failed to extract firmware:', e.message);
-                if (failure) return res.redirect(failure);
-            }
-        } else if (req.file.originalname.endsWith('.bin')) {
-            const destPath = path.join(__dirname, 'scratch', 'last_uploaded.bin');
-            require('fs').copyFileSync(req.file.path, destPath);
-            const stats = require('fs').statSync(destPath);
-            console.log(`✅ [ÉXITO] Archivo .bin REAL subido correctamente: ${req.file.originalname}`);
-            console.log(`✅ [ÉXITO] Tamaño del archivo recibido: ${stats.size} bytes. Guardado en: scratch/last_uploaded.bin`);
-            console.log(`⚠️  [NOTA] Este es un simulador web. El archivo binario de ARM fue guardado exitosamente en el servidor simulado, replicando la función real al 100%.`);
-        }
+    if (type === 'door_on') {
+        openDoorLocally('Door 1', 'Remote Admin');
     }
 
-    if (redirect) {
-        return res.redirect(redirect);
+    if (params.redirect) {
+        return res.redirect(params.redirect);
     }
     res.send('OK');
 });
 
-app.get('/if.cgi', authMiddleware, (req, res) => {
-    const { redirect, type, id, EmployeeID, username, Password, CardID } = req.query;
-    let config = getConfig();
+app.all('/if.cgi', authMiddleware, (req, res) => {
+    const params = Object.assign({}, req.query, req.body);
+    const { type, id, MarkID, username, CardID, Password } = params;
+    const config = getConfig();
 
-    if (type === 'want_emp') {
-        activeUserEditId = parseInt(id, 10);
-    } else if (type === 'user_data') {
-        const empId = parseInt(EmployeeID, 10);
-        let user = config.users.find(u => u.id === empId);
-        if (!user) {
-            user = { id: empId || (config.users.length ? Math.max(...config.users.map(u => u.id)) + 1 : 1) };
-            config.users.push(user);
-        }
-        user.name = username || user.name || 'New User';
-        user.card = CardID || user.card || '';
-        user.pin = Password || user.pin || '';
-        saveConfig(config);
-        config.logs.push({
-            timestamp: new Date().toISOString(),
-            user: 'Admin',
-            action: 'Added/Edited User ' + user.name,
-            door: 'System'
-        });
-        saveConfig(config);
+    if (type === 'user_edit' || type === 'want_emp') {
+        activeUserEditId = parseInt(id || MarkID);
     } else if (type === 'user_delete') {
-        const empId = parseInt(EmployeeID, 10);
-        config.users = config.users.filter(u => u.id !== empId);
+        const deletedUser = config.users.find(u => u.id === parseInt(id));
+        config.users = config.users.filter(u => u.id !== parseInt(id));
         saveConfig(config);
-        config.logs.push({
+        reportEventToCloud('User Deleted', deletedUser ? deletedUser.name : 'Unknown', `ID: ${id}`);
+    } else if (type === 'user_data') {
+        const userId = parseInt(MarkID);
+        const userIndex = config.users.findIndex(u => u.id === userId);
+        const userData = {
+            id: userId,
+            name: username || 'New User',
+            card: CardID || '00000000',
+            pin: Password || '0000'
+        };
+
+        if (userIndex > -1) {
+            config.users[userIndex] = userData;
+        } else {
+            config.users.push(userData);
+        }
+
+        // Log the action
+        config.logs.unshift({
+            id: Date.now().toString(),
             timestamp: new Date().toISOString(),
-            user: 'Admin',
-            action: 'Deleted User ' + empId,
-            door: 'System'
+            user: 'System',
+            action: userIndex > -1 ? 'User Updated' : 'User Created',
+            door: `User ${userId}`
         });
+
         saveConfig(config);
+        
+        // Report User Change to Cloud
+        reportEventToCloud(userIndex > -1 ? 'User Updated' : 'User Created', username || 'New User', `ID: ${userId}`);
     }
 
-    if (redirect) return res.redirect(redirect);
+    if (params.redirect) {
+        return res.redirect(params.redirect);
+    }
     res.send('OK');
 });
 
-// Static Assets (Images, CSS, JS)
 app.use(express.static(WEB_DIR));
-
-// Simulation Control API (Moderno Access Dashboard)
-app.get('/api/simulator/status', (req, res) => {
-    res.json(getConfig());
-});
-
-app.post('/api/simulator/mode', (req, res) => {
-    process.env.MODE = req.body.mode;
-    res.json({ success: true, mode: process.env.MODE });
-});
 
 app.listen(PORT, () => {
     console.log(`Authentic TNG PRO WebServer Simulator running at http://localhost:${PORT}`);
-    console.log(`Serving firmware assets from: ${WEB_DIR}`);
 });
