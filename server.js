@@ -21,8 +21,10 @@ app.use(morgan('dev'));
 app.use(express.json());
 
 // Cloud / Local Web Integration Configuration
+// Cloud / Local Web Integration Configuration
 const SERIAL_NUMBER = process.env.SERIAL_NUMBER || '084764(112334)';
-const WEBHOOK_URL = process.env.WEBHOOK_URL; // URL of your web platform to receive events
+const MODERNO_API_URL = process.env.MODERNO_API_URL || 'http://localhost:10000'; // Default port for Moderno Access backend
+const WEBHOOK_URL = process.env.WEBHOOK_URL || `${MODERNO_API_URL}/api/webhooks/hardware-event`;
 
 // Simulation State
 function getConfig() {
@@ -75,8 +77,29 @@ async function reportEventToCloud(action, user, door) {
 }
 
 async function syncWithCloud() {
-    if (!WEBHOOK_URL) return; // Only sync if we have a target
-    // ... logic for syncing if needed, otherwise rely on web calling the plate endpoints directly
+    if (!MODERNO_API_URL) return;
+    
+    console.log(`[Cloud] Syncing user list from ${MODERNO_API_URL}...`);
+    try {
+        const response = await axios.get(`${MODERNO_API_URL}/api/public/devices/${SERIAL_NUMBER}/sync`, { timeout: 5000 });
+        
+        if (response.data && response.data.users) {
+            const config = getConfig();
+            const cloudUsers = response.data.users;
+            
+            // Basic diff check to avoid unnecessary writes
+            if (JSON.stringify(config.users) !== JSON.stringify(cloudUsers)) {
+                console.log(`[Cloud] Sync Success! Found ${cloudUsers.length} users. Updating local database...`);
+                config.users = cloudUsers;
+                config.board.name = response.data.board.name;
+                saveConfig(config);
+            } else {
+                console.log(`[Cloud] Already in sync. (${cloudUsers.length} users)`);
+            }
+        }
+    } catch (err) {
+        console.error(`[Cloud Sync Error] ${err.message}`);
+    }
 }
 
 function openDoorLocally(doorName, userName) {
@@ -95,13 +118,12 @@ function openDoorLocally(doorName, userName) {
     console.log(`[Hardware] Door ${doorName} opened by ${userName}`);
     
     // If this was triggered locally, we should report it to cloud
-    // (In this case, if it's 'Remote Web' we don't report back to avoid loops, 
-    // but usually plates report EVERYTHING)
     reportEventToCloud('Open Door', userName, doorName);
 }
 
 // Polling Interval (every 15 seconds to avoid saturation during dev)
 setInterval(syncWithCloud, 15000);
+syncWithCloud(); // Initial sync on startup
 
 // --- SSI Processor ---
 function processSSI(html, config) {
@@ -165,21 +187,26 @@ function processSSI(html, config) {
         'status.cgi$logo_show': 'logo.png',
         'status.cgi$weblog_show': 'logo.png',
         'status.cgi$HEX_DEC': '0',
-        'status.cgi$Security_Status': '2,2,2,2,2,2,2,2',
+        'status.cgi$Security_Status': config.board.securityState || '2,2,2,2,2,2,2,2',
         'status.cgi$modelname': '3',
         'status.cgi$control_mode_number': '0',
         'status.cgi$lift_ms': '0',
         'status.cgi$language': '2',
         'status.cgi$web_mode': '0',
         'status.cgi$log_pw_on': 'checked',
-        'status.cgi$end_log': '0',
+        'status.cgi$end_log': config.logs.length.toString(),
         'status.cgi$ver': '2.09.00,Mar 28 2017(HW1.2)',
         'status.cgi$hwver': '1.2',
-        'status.cgi$uptime': '0 days, 01:22:11',
+        'status.cgi$uptime': '0 days, 04:22:11',
         'status.cgi$mac': '00:0e:e3:08:47:64',
-        'status.cgi$ip': '192.168.0.66',
-        'status.cgi$mask': '255.255.255.0',
-        'status.cgi$gateway': '192.168.0.1',
+        'status.cgi$ip': config.network?.ip || '192.168.0.66',
+        'status.cgi$mask': config.network?.mask || '255.255.255.0',
+        'status.cgi$gateway': config.network?.gateway || '192.168.0.1',
+        'status.cgi$pdns': '8.8.8.8',
+        'status.cgi$sdns': '8.8.4.4',
+        'status.cgi$ntp_server': 'time.stdtime.gov.tw',
+        'status.cgi$timezone': '0',
+        'status.cgi$dst_enable': '0',
     };
 
     let logRows = '';
@@ -192,15 +219,12 @@ function processSSI(html, config) {
         if (log.action.includes('Open')) actionClass = 'log-success';
         if (log.action.includes('Update') || log.action.includes('Create')) actionClass = 'log-warning';
         
-        logRows += `<TR align="center" class="${actionClass}">
-            <TD>${index + 1}</TD>
-            <TD>000${index+1}</TD>
-            <TD><strong>${log.user}</strong></TD>
-            <TD>${dateStr}</TD>
-            <TD>${timeStr}</TD>
-            <TD><span class="badge">IN</span></TD>
+        logRows += `<TR align="center">
+            <TD>${dateStr} ${timeStr}</TD>
+            <TD>${log.card || '00000000'}</TD>
+            <TD>${log.user}</TD>
+            <TD>${log.action.includes('Open') ? 'OK' : 'Denied'}</TD>
             <TD>${log.door}</TD>
-            <TD><i>${log.action}</i></TD>
         </TR>`;
     });
 
@@ -213,7 +237,14 @@ function processSSI(html, config) {
 
     let userRows = '';
     config.users.forEach((user, index) => {
-        userRows += `<TR align="center"><TD>${index + 1}</TD><TD><a href="if.cgi?redirect=EmpRcd.htm&type=user_edit&id=${user.id}">${user.id}</a></TD><TD>${user.name}</TD><TD>${user.card}</TD><TD>Active</TD><TD><a href="if.cgi?redirect=database.htm&type=user_delete&id=${user.id}">[Del]</a></TD></TR>`;
+        userRows += `<TR align="center">
+            <TD>${index + 1}</TD>
+            <TD>${user.id}</TD>
+            <TD>${user.name}</TD>
+            <TD>${user.card || '00000000'}</TD>
+            <TD>${user.status || 'Active'}</TD>
+            <TD><A target='Status' HREF='if.cgi?redirect=EmpRcd.htm&type=user_edit&id=${user.id}'>Edit</A></TD>
+        </TR>`;
     });
 
     const ssiMap = Object.assign({}, fullSsiMap, {
@@ -367,6 +398,16 @@ app.all('/man.cgi', authMiddleware, (req, res) => {
 
     console.log(`[man.cgi] Query received:`, params);
 
+    if (type === 'door_status') {
+        const config = getConfig();
+        let table = '<table border="1">';
+        config.doors.forEach(d => {
+            table += `<tr align="center"><td>D${d.id}</td><td>${d.status === 'open' ? 'OPEN' : 'OK'}</td><td>OK</td><td>OK</td><td>OK</td><td>OK</td><td>OK</td><td>OK</td><td>OK</td></tr>`;
+        });
+        table += '</table>';
+        return res.send(table);
+    }
+
     if (type === 'door_on') {
         console.log(`[man.cgi] Type: ${type}, securitystate: ${securitystate}`);
 
@@ -449,7 +490,6 @@ app.all('/if.cgi', authMiddleware, (req, res) => {
             config.users.push(userData);
         }
 
-        // Log the action
         config.logs.unshift({
             id: Date.now().toString(),
             timestamp: new Date().toISOString(),
@@ -459,9 +499,17 @@ app.all('/if.cgi', authMiddleware, (req, res) => {
         });
 
         saveConfig(config);
-        
-        // Report User Change to Cloud
         reportEventToCloud(userIndex > -1 ? 'User Updated' : 'User Created', username || 'New User', `ID: ${userId}`);
+    } else if (type === 'search_emp') {
+        const query = params.UserID || params.CardID || params.UserName;
+        console.log(`[Search] Searching for user: ${query}`);
+    } else if (type === 'clock_setup') {
+        console.log(`[Clock] System time updated to: ${params.year}/${params.month}/${params.day} ${params.hour}:${params.min}`);
+    } else if (type === 'set_pass') {
+        console.log(`[Security] Admin password change requested`);
+        if (!config.board) config.board = {};
+        config.board.password = params.new_pass;
+        saveConfig(config);
     }
 
     if (params.redirect) {
@@ -471,6 +519,17 @@ app.all('/if.cgi', authMiddleware, (req, res) => {
 });
 
 app.use(express.static(WEB_DIR));
+
+// Serve real configuration files for cloning/backup
+app.get(['/database.cfg', '/userdata.cfg', '/userlist.txt'], (req, res) => {
+    const filename = path.basename(req.path);
+    const filePath = path.join(__dirname, 'real_plate_clone', filename);
+    if (fs.existsSync(filePath)) {
+        res.download(filePath);
+    } else {
+        res.status(404).send('Config file not found');
+    }
+});
 
 app.listen(PORT, () => {
     console.log(`Authentic TNG PRO WebServer Simulator running at http://localhost:${PORT}`);
