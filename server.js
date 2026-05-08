@@ -273,7 +273,22 @@ function processSSI(html, config) {
         'if.cgi$Password': activeUser.pin || '',
         'if.cgi$card_snc': activeUser.card || '',
         'status.cgi$end_log': config.logs.length.toString(),
-        'man.cgi$log_tail': config.logs.length.toString()
+        'man.cgi$log_tail': config.logs.length.toString(),
+        // Hardware Settings from real config
+        'status.cgi$dhcp_on': config.network?.dhcp ? 'checked' : '',
+        'status.cgi$dhcp_off': !config.network?.dhcp ? 'checked' : '',
+        'status.cgi$wan_fix_ip1': (config.network?.ip || '192.168.0.66').split('.')[0],
+        'status.cgi$wan_fix_ip2': (config.network?.ip || '192.168.0.66').split('.')[1],
+        'status.cgi$wan_fix_ip3': (config.network?.ip || '192.168.0.66').split('.')[2],
+        'status.cgi$wan_fix_ip4': (config.network?.ip || '192.168.0.66').split('.')[3],
+        'status.cgi$wan_fix_netmask1': (config.network?.mask || '255.255.255.0').split('.')[0],
+        'status.cgi$wan_fix_netmask2': (config.network?.mask || '255.255.255.0').split('.')[1],
+        'status.cgi$wan_fix_netmask3': (config.network?.mask || '255.255.255.0').split('.')[2],
+        'status.cgi$wan_fix_netmask4': (config.network?.mask || '255.255.255.0').split('.')[3],
+        'status.cgi$wan_fix_gateway1': (config.network?.gateway || '192.168.0.1').split('.')[0],
+        'status.cgi$wan_fix_gateway2': (config.network?.gateway || '192.168.0.1').split('.')[1],
+        'status.cgi$wan_fix_gateway3': (config.network?.gateway || '192.168.0.1').split('.')[2],
+        'status.cgi$wan_fix_gateway4': (config.network?.gateway || '192.168.0.1').split('.')[3],
     });
 
     return html.replace(/<!-#([a-zA-Z0-9.]+)\$([a-zA-Z0-9_]+)-->/g, (match, script, variable) => {
@@ -382,6 +397,22 @@ app.all('/man.cgi', authMiddleware, (req, res) => {
             securitystate: securitystate,
             message: `Relay ${relay} opened`
         });
+    }
+
+    if (type === 'set_net') {
+        const config = getConfig();
+        if (!config.network) config.network = {};
+        config.network.dhcp = params.dhcp === '1';
+        config.network.ip = `${params.ip1}.${params.ip2}.${params.ip3}.${params.ip4}`;
+        config.network.mask = `${params.mask1}.${params.mask2}.${params.mask3}.${params.mask4}`;
+        config.network.gateway = `${params.gateway1}.${params.gateway2}.${params.gateway3}.${params.gateway4}`;
+        saveConfig(config);
+        console.log(`[Config] Network updated: ${config.network.ip}`);
+    }
+
+    if (type === 'reboot') {
+        console.log(`[System] Rebooting simulator...`);
+        setTimeout(() => process.exit(0), 1000); // Simulate reboot by exiting (PM2 or Vercel will restart it)
     }
 
     if (params.redirect) {
