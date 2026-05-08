@@ -21,7 +21,7 @@ app.use(morgan('dev'));
 app.use(express.json());
 
 // Cloud / Local Web Integration Configuration
-const SERIAL_NUMBER = process.env.SERIAL_NUMBER || 'TNG20260506';
+const SERIAL_NUMBER = process.env.SERIAL_NUMBER || '084764(112334)';
 const WEBHOOK_URL = process.env.WEBHOOK_URL; // URL of your web platform to receive events
 
 // Simulation State
@@ -173,13 +173,13 @@ function processSSI(html, config) {
         'status.cgi$web_mode': '0',
         'status.cgi$log_pw_on': 'checked',
         'status.cgi$end_log': '0',
-        'status.cgi$ver': 'C2P-Ver1.9',
-        'status.cgi$hwver': '2.0',
-        'status.cgi$uptime': '12 days, 04:22:11',
-        'status.cgi$mac': '00:00:00:00:00:00',
-        'status.cgi$ip': '192.168.1.100',
+        'status.cgi$ver': '2.09.00,Mar 28 2017(HW1.2)',
+        'status.cgi$hwver': '1.2',
+        'status.cgi$uptime': '0 days, 01:22:11',
+        'status.cgi$mac': '00:0e:e3:08:47:64',
+        'status.cgi$ip': '192.168.0.66',
         'status.cgi$mask': '255.255.255.0',
-        'status.cgi$gateway': '192.168.1.1',
+        'status.cgi$gateway': '192.168.0.1',
     };
 
     let logRows = '';
@@ -225,17 +225,17 @@ function processSSI(html, config) {
         'if.cgi$LogCount': `${config.logs.length}/0`,
         'if.cgi$prev_emp': '',
         'if.cgi$next_emp': '',
-        'if.cgi$TID': 'TNG-PRO-V1',
-        'if.cgi$wan_ip': '192.168.1.100',
+        'if.cgi$TID': '00:0e:e3:08:47:64',
+        'if.cgi$wan_ip': '192.168.0.66',
         'if.cgi$wan_netmask': '255.255.255.0',
-        'if.cgi$wan_gateway': '192.168.1.1',
-        'man.cgi$serial_no': 'TNG20260506',
-        'man.cgi$wan_mac_addr': '00:1A:2B:3C:4D:5E',
-        'status.cgi$outdate': '2026/05/06',
+        'if.cgi$wan_gateway': '192.168.0.1',
+        'man.cgi$serial_no': '084764(112334)',
+        'man.cgi$wan_mac_addr': '00:0e:e3:08:47:64',
+        'status.cgi$outdate': '2017/03/28',
         'status.cgi$md5_signal': '',
-        'status.cgi$fmver': 'V1.9.0328',
-        'status.cgi$hwver': '2.0',
-        'status.cgi$module_type': 'TNG-PRO-C2P',
+        'status.cgi$fmver': '2.09.00',
+        'status.cgi$hwver': '1.2',
+        'status.cgi$module_type': 'S201',
         'status.cgi$pdns': '8.8.8.8',
         'status.cgi$ap_tcps_port': '443',
         'status.cgi$ap_tcpc1': 'access.moderno.com.ar',
