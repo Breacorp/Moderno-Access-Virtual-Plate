@@ -237,14 +237,17 @@ function processSSI(html, config) {
 
     let userRows = '';
     config.users.forEach((user, index) => {
-        userRows += `<TR align="center">
-            <TD>${index + 1}</TD>
-            <TD>${user.id}</TD>
-            <TD>${user.name}</TD>
-            <TD>${user.card || '00000000'}</TD>
-            <TD>${user.status || 'Active'}</TD>
-            <TD><A target='Status' HREF='if.cgi?redirect=EmpRcd.htm&type=user_edit&id=${user.id}'>Edit</A></TD>
-        </TR>`;
+        const bgcolor = index % 2 === 0 ? '#999F9F' : '#99CFCF';
+        userRows += `<tr bgcolor='${bgcolor}'>
+            <td nowrap><font size=1 face=Arial><INPUT TYPE='CHECKBOX' NAME='SELECT' VALUE='${user.id}'>${index + 1}.</font></td>
+            <td ALIGN=CENTER nowrap><A target='Status' HREF='if.cgi?redirect=EmpRcd.htm&failure=fail.htm&type=want_emp&id=${user.id} ' >${user.id}</A></td>
+            <td ALIGN=CENTER nowrap>${user.name}</td>
+            <td ALIGN=CENTER>${user.type || 'Normal'}</td>
+            <td><font size=1 face=Arial color=#000000><P ALIGN=CENTER><img src=${user.active !== false ? 'v.gif' : 'no.gif'}></P></font></td>
+            <td><P ALIGN=CENTER><img src=${user.pin ? 'v.gif' : 'no.gif'}></P></td>
+            <td><P ALIGN=CENTER><img src=${user.card ? 'v.gif' : 'no.gif'}></P></td>
+            <td><P ALIGN=CENTER><font size=1 face=Arial color=#000000>${user.bypass || '1'}</font></P></td>
+        </tr>`;
     });
 
     const ssiMap = Object.assign({}, fullSsiMap, {
