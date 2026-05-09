@@ -23,7 +23,7 @@ app.use(express.json());
 // Cloud / Local Web Integration Configuration
 // Cloud / Local Web Integration Configuration
 const SERIAL_NUMBER = process.env.SERIAL_NUMBER || '084764(112334)';
-const MODERNO_API_URL = process.env.MODERNO_API_URL || 'http://localhost:10000'; // Default port for Moderno Access backend
+const MODERNO_API_URL = process.env.MODERNO_API_URL || 'https://access.moderno.com.ar';
 const WEBHOOK_URL = process.env.WEBHOOK_URL || `${MODERNO_API_URL}/api/webhooks/hardware-event`;
 
 // Simulation State
