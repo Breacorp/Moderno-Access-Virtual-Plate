@@ -429,25 +429,20 @@ app.all('/status.cgi', authMiddleware, (req, res) => {
     }
 
     if (params.type === 'config') {
-        console.log(`[Config] Updating terminal configuration...`);
-        console.log(`[Config] Raw Params:`, JSON.stringify(params));
+        const logMsg = `[${new Date().toISOString()}] Config update: ${JSON.stringify(params)}\n`;
+        fs.appendFileSync(path.join(__dirname, 'scratch/cgi_log.txt'), logMsg);
         
         if (!config.board) config.board = {};
         
-        // Update all fields from the form
-        if (params.TF_peer_ip) config.board.modernoApiUrl = params.TF_peer_ip;
-        if (params.TF_port) config.board.modernoApiPort = params.TF_port;
-        if (params.http_block_value) config.board.httpPort = params.http_block_value;
-        if (params.id) config.board.id = params.id;
-        if (params.dhcp_name) config.board.hostname = params.dhcp_name;
-        
-        // Network fields
-        if (!config.network) config.network = {};
-        if (params.TF_ip) config.network.ip = Array.isArray(params.TF_ip) ? params.TF_ip[0] : params.TF_ip;
+        config.board.modernoApiUrl = params.TF_peer_ip || config.board.modernoApiUrl;
+        config.board.modernoApiPort = params.TF_port || config.board.modernoApiPort;
+        config.board.httpPort = params.http_block_value || config.board.httpPort;
+        config.board.id = params.id || config.board.id;
+        config.board.hostname = params.dhcp_name || config.board.hostname;
+        config.board.lastUpdate = new Date().toISOString();
         
         saveConfig(config);
         updateCloudUrls(config.board.modernoApiUrl, config.board.modernoApiPort);
-        console.log(`[Config] Saved board config:`, JSON.stringify(config.board));
     }
 
     if (params.redirect) {
