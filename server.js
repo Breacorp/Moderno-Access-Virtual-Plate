@@ -35,6 +35,7 @@ function getCorrectFilePath(filename) {
 
 app.use(morgan('dev'));
 app.use(express.json());
+app.use(express.urlencoded({ extended: true }));
 
 // Cloud / Local Web Integration Configuration
 // Cloud / Local Web Integration Configuration
@@ -55,7 +56,7 @@ function updateCloudUrls(newUrl, newPort) {
             url = `${url}:${newPort}`;
         }
     }
-    if (!process.env.MODERNO_API_URL) MODERNO_API_URL = url;
+    if (!process.env.MODERNO_API_URL || true) MODERNO_API_URL = url;
     if (!process.env.WEBHOOK_URL) WEBHOOK_URL = `${MODERNO_API_URL}/api/webhooks/hardware-event`;
     console.log(`[Cloud] API URL updated to: ${MODERNO_API_URL}`);
 }
@@ -425,12 +426,14 @@ app.all('/status.cgi', authMiddleware, (req, res) => {
 
     if (params.type === 'config') {
         console.log(`[Config] Updating terminal configuration...`);
+        console.log(`[Config] Received TF_peer_ip: ${params.TF_peer_ip}, TF_port: ${params.TF_port}`);
         if (!config.board) config.board = {};
         config.board.modernoApiUrl = params.TF_peer_ip;
         config.board.modernoApiPort = params.TF_port;
         config.board.httpPort = params.http_block_value;
         saveConfig(config);
         updateCloudUrls(params.TF_peer_ip, params.TF_port);
+        console.log(`[Config] Configuration saved and URLs updated.`);
     }
 
     if (params.redirect) {
