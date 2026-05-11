@@ -17,6 +17,22 @@ const PORT = process.env.PORT || 8080;
 const CONFIG_PATH = path.join(__dirname, 'config.json');
 const WEB_DIR = path.join(__dirname, 'public');
 
+// Helper for case-insensitive file lookup
+function getCorrectFilePath(filename) {
+    const filePath = path.join(WEB_DIR, filename);
+    if (fs.existsSync(filePath)) return filePath;
+
+    // Try case-insensitive match
+    try {
+        const files = fs.readdirSync(WEB_DIR);
+        const lowerFilename = filename.toLowerCase();
+        const matched = files.find(f => f.toLowerCase() === lowerFilename);
+        if (matched) return path.join(WEB_DIR, matched);
+    } catch (e) {}
+    
+    return null;
+}
+
 app.use(morgan('dev'));
 app.use(express.json());
 
@@ -207,6 +223,34 @@ function processSSI(html, config) {
         'status.cgi$ntp_server': 'time.stdtime.gov.tw',
         'status.cgi$timezone': '0',
         'status.cgi$dst_enable': '0',
+        
+        // Expanded mapping for 100% parity
+        'status.cgi$web_language': config.board.language || '2',
+        'status.cgi$BYPASS_MODE': config.board.bypassMode || '0',
+        'status.cgi$two_door': config.board.syncAllData === '0' ? 'checked' : '',
+        'status.cgi$one_door': config.board.syncAllData === '1' ? 'checked' : '',
+        'status.cgi$en_anti_pass_back': config.board.weiganOut === '1' ? 'checked' : '',
+        'status.cgi$en_anti_follow': config.board.weiganOut === '2' ? 'checked' : '',
+        'status.cgi$dis_anti_pass_back': config.board.weiganOut === '0' ? 'checked' : '',
+        'status.cgi$anti_pb_period': config.board.clockInterval || '0',
+        'status.cgi$en_anti_forced': config.board.antiForced === '1' ? 'checked' : '',
+        'status.cgi$dis_anti_forced': config.board.antiForced === '0' ? 'checked' : '',
+        'status.cgi$anti_fd_pwd': config.board.antiFdPwd || '9',
+        'status.cgi$semac_ip1': '0', 'status.cgi$semac_ip2': '0', 'status.cgi$semac_ip3': '0', 'status.cgi$semac_ip4': '0',
+        'status.cgi$en_fast_reg_card': config.board.fastRegC === '1' ? 'checked' : '',
+        'status.cgi$dis_fast_reg_card': config.board.fastRegC === '0' ? 'checked' : '',
+        'status.cgi$lift_m': config.board.lifts === '0' ? 'checked' : '',
+        'status.cgi$lift_s': config.board.lifts === '1' ? 'checked' : '',
+        'status.cgi$in_relay_control': config.board.relayControl === '2' ? 'checked' : '',
+        'status.cgi$out_relay_control': config.board.relayControl === '1' ? 'checked' : '',
+        'status.cgi$both_relay_control': config.board.relayControl === '0' ? 'checked' : '',
+        'status.cgi$blacklist_sw_off': config.board.blacklist === '0' ? 'checked' : '',
+        'status.cgi$blacklist_sw_on': config.board.blacklist === '1' ? 'checked' : '',
+        'status.cgi$language_set': '1,1,1',
+        'status.cgi$add_list': '0,0,0',
+        'status.cgi$del_list': '0,0,0',
+        'status.cgi$mini52_type': 'S201-V',
+        'status.cgi$mini52_fwver': '1.0.0',
     };
 
     let logRows = '';
@@ -336,8 +380,8 @@ function processSSI(html, config) {
 
 // Routes
 app.get(['/', '/index.htm'], authMiddleware, (req, res) => {
-    const filePath = path.join(WEB_DIR, 'index.htm');
-    if (fs.existsSync(filePath)) {
+    const filePath = getCorrectFilePath('index.htm');
+    if (filePath) {
         let html = fs.readFileSync(filePath, 'utf8');
         html = processSSI(html, getConfig());
         res.send(html);
@@ -348,14 +392,14 @@ app.get(['/', '/index.htm'], authMiddleware, (req, res) => {
 
 app.get(/\.htm$/i, authMiddleware, (req, res) => {
     const filename = path.basename(req.path);
-    const filePath = path.join(WEB_DIR, filename);
+    const filePath = getCorrectFilePath(filename);
 
-    if (fs.existsSync(filePath)) {
+    if (filePath) {
         let html = fs.readFileSync(filePath, 'utf8');
         html = processSSI(html, getConfig());
         res.send(html);
     } else {
-        console.error(`[404] File not found in firmware assets: ${filename} (Path: ${filePath})`);
+        console.error(`[404] File not found in firmware assets: ${filename}`);
         res.status(404).send('File not found in firmware assets');
     }
 });
@@ -366,17 +410,13 @@ app.all('/status.cgi', authMiddleware, (req, res) => {
     const config = getConfig();
 
     if (a === 'new_log') {
-        const config = getConfig();
         const clientLogCount = parseInt(b);
         const serverLogCount = config.logs.length;
         
-        // If there are no new logs, return a small value so the client keeps polling
         if (serverLogCount <= clientLogCount) {
             return res.send('0');
         }
         
-        // Get the most recent log that the client hasn't seen yet
-        // Since we use unshift(), the newest log is at index 0
         const latestLog = config.logs[0];
         const user = config.users.find(u => u.name === latestLog.user) || { id: '0', name: latestLog.user };
         
@@ -384,10 +424,25 @@ app.all('/status.cgi', authMiddleware, (req, res) => {
         const dateStr = `${now.getFullYear()}/${(now.getMonth() + 1).toString().padStart(2, '0')}/${now.getDate().toString().padStart(2, '0')}`;
         const timeStr = `${now.getHours().toString().padStart(2, '0')}:${now.getMinutes().toString().padStart(2, '0')}:${now.getSeconds().toString().padStart(2, '0')}`;
         
-        // CSV Format for autolog.htm: UserID, UserName, Date, Time, IN/OUT, Door, Note, NextTail
         const response = `${user.id || '0'},${user.name},${dateStr},${timeStr},IN,${latestLog.door},${latestLog.action},${serverLogCount}`;
-        
         return res.send(response);
+    }
+
+    if (params.type === 'config') {
+        console.log(`[Config] Updating terminal configuration...`);
+        if (!config.board) config.board = {};
+        config.board.language = params.language;
+        config.board.bypassMode = params.BYPASS_MODE;
+        config.board.syncAllData = params.sync_all_data;
+        config.board.weiganOut = params.Weigan_out;
+        config.board.clockInterval = params.clock_interval;
+        config.board.antiForced = params.Anti_Forced;
+        config.board.antiFdPwd = params.password;
+        config.board.fastRegC = params.fast_reg_c;
+        config.board.lifts = params.lifts;
+        config.board.relayControl = params.relay_control_data;
+        config.board.blacklist = params.BLACKLIST;
+        saveConfig(config);
     }
 
     if (params.redirect) {
