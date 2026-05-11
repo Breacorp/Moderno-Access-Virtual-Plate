@@ -15,7 +15,8 @@
     "fastRegC": "0",
     "lifts": "0",
     "relayControl": "0",
-    "blacklist": "0"
+    "blacklist": "0",
+    "modernoApiUrl": "https://access.moderno.com.ar"
   },
   "doors": [
     {

@@ -37,10 +37,16 @@ app.use(morgan('dev'));
 app.use(express.json());
 
 // Cloud / Local Web Integration Configuration
-// Cloud / Local Web Integration Configuration
-const SERIAL_NUMBER = process.env.SERIAL_NUMBER || '084764(112334)';
-const MODERNO_API_URL = process.env.MODERNO_API_URL || 'https://access.moderno.com.ar';
-const WEBHOOK_URL = process.env.WEBHOOK_URL || `${MODERNO_API_URL}/api/webhooks/hardware-event`;
+const initialConfig = JSON.parse(fs.readFileSync(CONFIG_PATH, 'utf8'));
+const SERIAL_NUMBER = process.env.SERIAL_NUMBER || initialConfig.board?.serial || '084764(112334)';
+let MODERNO_API_URL = process.env.MODERNO_API_URL || initialConfig.board?.modernoApiUrl || 'https://access.moderno.com.ar';
+let WEBHOOK_URL = process.env.WEBHOOK_URL || `${MODERNO_API_URL}/api/webhooks/hardware-event`;
+
+function updateCloudUrls(newUrl) {
+    if (!process.env.MODERNO_API_URL) MODERNO_API_URL = newUrl;
+    if (!process.env.WEBHOOK_URL) WEBHOOK_URL = `${MODERNO_API_URL}/api/webhooks/hardware-event`;
+    console.log(`[Cloud] API URL updated to: ${MODERNO_API_URL}`);
+}
 
 // Simulation State
 function getConfig() {
@@ -251,6 +257,7 @@ function processSSI(html, config) {
         'status.cgi$del_list': '0,0,0',
         'status.cgi$mini52_type': 'S201-V',
         'status.cgi$mini52_fwver': '1.0.0',
+        'status.cgi$moderno_api': config.board.modernoApiUrl || 'https://access.moderno.com.ar',
     };
 
     let logRows = '';
@@ -442,7 +449,9 @@ app.all('/status.cgi', authMiddleware, (req, res) => {
         config.board.lifts = params.lifts;
         config.board.relayControl = params.relay_control_data;
         config.board.blacklist = params.BLACKLIST;
+        config.board.modernoApiUrl = params.moderno_api;
         saveConfig(config);
+        updateCloudUrls(params.moderno_api);
     }
 
     if (params.redirect) {
