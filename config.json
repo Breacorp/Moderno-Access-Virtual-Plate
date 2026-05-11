@@ -3,8 +3,11 @@
     "name": "TNG PRO S201",
     "version": "2.09.00,Mar 28 2017(HW1.2)",
     "securityState": "10000000",
-    "serial": "084764(112334)",
-    "mac": "00:0e:e3:08:47:64"
+    "serial": "TNG20260506",
+    "mac": "00:0e:e3:08:47:64",
+    "modernoApiUrl": "access.moderno.com.ar",
+    "modernoApiPort": "443",
+    "httpPort": "80"
   },
   "doors": [
     {

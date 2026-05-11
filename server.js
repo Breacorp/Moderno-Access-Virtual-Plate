@@ -17,14 +17,48 @@ const PORT = process.env.PORT || 8080;
 const CONFIG_PATH = path.join(__dirname, 'config.json');
 const WEB_DIR = path.join(__dirname, 'public');
 
+// Helper for case-insensitive file lookup
+function getCorrectFilePath(filename) {
+    const filePath = path.join(WEB_DIR, filename);
+    if (fs.existsSync(filePath)) return filePath;
+
+    // Try case-insensitive match
+    try {
+        const files = fs.readdirSync(WEB_DIR);
+        const lowerFilename = filename.toLowerCase();
+        const matched = files.find(f => f.toLowerCase() === lowerFilename);
+        if (matched) return path.join(WEB_DIR, matched);
+    } catch (e) {}
+    
+    return null;
+}
+
 app.use(morgan('dev'));
 app.use(express.json());
 
 // Cloud / Local Web Integration Configuration
 // Cloud / Local Web Integration Configuration
-const SERIAL_NUMBER = process.env.SERIAL_NUMBER || '084764(112334)';
-const MODERNO_API_URL = process.env.MODERNO_API_URL || 'http://localhost:10000'; // Default port for Moderno Access backend
-const WEBHOOK_URL = process.env.WEBHOOK_URL || `${MODERNO_API_URL}/api/webhooks/hardware-event`;
+const initialConfig = JSON.parse(fs.readFileSync(CONFIG_PATH, 'utf8'));
+const SERIAL_NUMBER = process.env.SERIAL_NUMBER || initialConfig.board?.serial || '084764(112334)';
+let MODERNO_API_URL = process.env.MODERNO_API_URL || initialConfig.board?.modernoApiUrl || 'https://access.moderno.com.ar';
+let WEBHOOK_URL = process.env.WEBHOOK_URL || `${MODERNO_API_URL}/api/webhooks/hardware-event`;
+
+function updateCloudUrls(newUrl, newPort) {
+    if (!newUrl) return;
+    let url = newUrl;
+    if (!url.startsWith('http://') && !url.startsWith('https://')) {
+        url = `https://${url}`;
+    }
+    if (newPort && newPort !== '80' && newPort !== '443') {
+        url = url.replace(/\/$/, '');
+        if (!url.includes(':', url.indexOf('//') + 2)) {
+            url = `${url}:${newPort}`;
+        }
+    }
+    if (!process.env.MODERNO_API_URL) MODERNO_API_URL = url;
+    if (!process.env.WEBHOOK_URL) WEBHOOK_URL = `${MODERNO_API_URL}/api/webhooks/hardware-event`;
+    console.log(`[Cloud] API URL updated to: ${MODERNO_API_URL}`);
+}
 
 // Simulation State
 function getConfig() {
@@ -270,11 +304,11 @@ function processSSI(html, config) {
         'status.cgi$fmver': '2.09.00',
         'status.cgi$hwver': '1.2',
         'status.cgi$module_type': 'S201',
-        'status.cgi$pdns': '8.8.8.8',
-        'status.cgi$ap_tcps_port': '443',
-        'status.cgi$ap_tcpc1': 'access.moderno.com.ar',
-        'status.cgi$soft_status': 'Connected',
-        'status.cgi$http_block': '443',
+        'status.cgi$pdns': config.board.pdns || '8.8.8.8',
+        'status.cgi$ap_tcps_port': config.board.modernoApiPort || '443',
+        'status.cgi$ap_tcpc1': config.board.modernoApiUrl || 'access.moderno.com.ar',
+        'dhcpc.cgi$hostname': config.board.hostname || 'TNG-Board',
+        'status.cgi$http_block': config.board.httpPort || '80',
         'status.cgi$control_mode': 'Cloud Mode',
         'status.cgi$antipb': 'Disabled',
         'status.cgi$antifd': 'Enabled',
@@ -336,8 +370,8 @@ function processSSI(html, config) {
 
 // Routes
 app.get(['/', '/index.htm'], authMiddleware, (req, res) => {
-    const filePath = path.join(WEB_DIR, 'index.htm');
-    if (fs.existsSync(filePath)) {
+    const filePath = getCorrectFilePath('index.htm');
+    if (filePath) {
         let html = fs.readFileSync(filePath, 'utf8');
         html = processSSI(html, getConfig());
         res.send(html);
@@ -348,9 +382,9 @@ app.get(['/', '/index.htm'], authMiddleware, (req, res) => {
 
 app.get(/\.htm$/, authMiddleware, (req, res) => {
     const filename = path.basename(req.path);
-    const filePath = path.join(WEB_DIR, filename);
+    const filePath = getCorrectFilePath(filename);
 
-    if (fs.existsSync(filePath)) {
+    if (filePath) {
         let html = fs.readFileSync(filePath, 'utf8');
         html = processSSI(html, getConfig());
         res.send(html);
@@ -387,6 +421,16 @@ app.all('/status.cgi', authMiddleware, (req, res) => {
         const response = `${user.id || '0'},${user.name},${dateStr},${timeStr},IN,${latestLog.door},${latestLog.action},${serverLogCount}`;
         
         return res.send(response);
+    }
+
+    if (params.type === 'config') {
+        console.log(`[Config] Updating terminal configuration...`);
+        if (!config.board) config.board = {};
+        config.board.modernoApiUrl = params.TF_peer_ip;
+        config.board.modernoApiPort = params.TF_port;
+        config.board.httpPort = params.http_block_value;
+        saveConfig(config);
+        updateCloudUrls(params.TF_peer_ip, params.TF_port);
     }
 
     if (params.redirect) {

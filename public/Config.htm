@@ -91,9 +91,9 @@
 						<TD>
 							<table id="table_so"><tr>
 									<td></td>
-									<td><input name="TF_port"  size=5 maxLength=5 value="2000"></td>
+									<td><input name="TF_port"  size=5 maxLength=5 value="<!-#status.cgi$ap_tcps_port-->"></td>
 									<td></td>
-									<td><input name="TF_peer_ip"  size=25 maxLength=64 value="0.0.0.0"></td>
+									<td><input name="TF_peer_ip"  size=25 maxLength=64 value="<!-#status.cgi$ap_tcpc1-->"></td>
 							</tr></table>
 						</TD>
 					</TR>
@@ -289,7 +289,7 @@ lan_text[2]=cht_text;
 	document.getElementById("relay_mode_control").rows[0].cells[5].innerHTML = "<font size=2><b>" + lan_text[lan][42] + "</b></FONT>";
 	document.getElementById("tabl_ne").rows[0].cells[0].innerHTML = "<FONT size=2><b>" + lan_text[lan][11] + " :</b></FONT>";
 	table.rows[1].cells[1].innerHTML = "<FONT size=2><b>" + lan_text[lan][31] + " : </b></FONT><INPUT maxLength=5 size=7 name=id value=\"1\">";
-	table.rows[13+2].cells[1].innerHTML = "<font size=2><b>" + lan_text[lan][32] + ":</b></font><input type='text' name='http_block_value' size=5 maxlength=5 value=\"80\">";
+	table.rows[13+2].cells[1].innerHTML = "<font size=2><b>" + lan_text[lan][32] + ":</b></font><input type='text' name='http_block_value' size=5 maxlength=5 value=\"<!-#status.cgi$http_block-->\">";
 	table.rows[22+2].cells[0].innerHTML = "<b><font color='#FF0000' size=2>" + lan_text[lan][33] + "</font></b>"
 	table.rows[14+2].cells[0].innerHTML = "<font size='2' color='#0000FF'><b>" + lan_text[lan][34] + " " + pro_name[0] + lan_text[lan][35] + ":</b></font>"
 
