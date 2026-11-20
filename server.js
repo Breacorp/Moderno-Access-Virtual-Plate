@@ -105,7 +105,9 @@ const authMiddleware = (req, res, next) => {
     }
     
     const credentials = auth(req);
-    if (!credentials || credentials.name !== process.env.BOARD_USER || credentials.pass !== process.env.BOARD_PASS) {
+    const expectedUser = process.env.BOARD_USER || 'admin';
+    const expectedPass = process.env.BOARD_PASS || 'admin';
+    if (!credentials || credentials.name !== expectedUser || credentials.pass !== expectedPass) {
         res.statusCode = 401;
         res.setHeader('WWW-Authenticate', 'Basic realm="TNG PRO WebServer"');
         res.end('Access denied');
