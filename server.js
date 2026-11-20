@@ -105,8 +105,12 @@ const authMiddleware = (req, res, next) => {
     }
     
     const credentials = auth(req);
-    const expectedUser = process.env.BOARD_USER || 'admin';
-    const expectedPass = process.env.BOARD_PASS || 'admin';
+    const expectedUser = process.env.BOARD_USER;
+    const expectedPass = process.env.BOARD_PASS;
+    if (!expectedUser || !expectedPass) {
+        res.statusCode = 503;
+        return res.end('Virtual plate credentials not configured');
+    }
     if (!credentials || credentials.name !== expectedUser || credentials.pass !== expectedPass) {
         res.statusCode = 401;
         res.setHeader('WWW-Authenticate', 'Basic realm="TNG PRO WebServer"');
