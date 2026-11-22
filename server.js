@@ -105,6 +105,7 @@ const authMiddleware = (req, res, next) => {
     }
     
     const credentials = auth(req);
+    const config = getConfig();
     const expectedUser = config.auth?.username || process.env.BOARD_USER || 'admin';
     const expectedPass = config.auth?.password || process.env.BOARD_PASS || 'admin';
     if (!credentials || credentials.name !== expectedUser || credentials.pass !== expectedPass) {
